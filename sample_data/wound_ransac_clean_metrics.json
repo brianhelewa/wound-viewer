@@ -1,0 +1,110 @@
+{
+  "units": {
+    "length": "mm",
+    "area": "mm^2",
+    "volume": "mm^3"
+  },
+  "surface_area": {
+    "mm2": 436488.6645299099,
+    "cm2": 4364.886645299099,
+    "in2": 676.5587831389266
+  },
+  "wound_surface_area_mm2": 327262.0788931182,
+  "depth": {
+    "avg_mm": 88.28390169164014,
+    "max_mm": 141.0880212565488,
+    "avg_cm": 8.828390169164013,
+    "max_cm": 14.108802125654881,
+    "avg_in": 3.4757441610881945,
+    "max_in": 5.55464650616334
+  },
+  "volume": {
+    "mm3": 1400674.4942481562,
+    "cm3": 1400.6744942481562,
+    "in3": 85.47440189701805,
+    "target_in3": 1.293,
+    "target_mm3": 21188.473751999998,
+    "abs_error_mm3": 1379486.0204961563,
+    "abs_error_in3": 84.18140189701805
+  },
+  "edges": {
+    "edge_attach_gap_p90_mm": 0.0,
+    "epibole_angle_p90_deg": 0.0,
+    "undermining_extent_p95_mm": 0.0,
+    "tunneling_flag": false,
+    "attachment_flag": true,
+    "epibole_flag": false,
+    "undermining_flag": false
+  },
+  "tissue_breakdown_percent_wound": {
+    "granulation_red": 88.95734764743739,
+    "slough_yellow": 0.49137546941633253,
+    "eschar_black": 0.420653611411679,
+    "epithelial_pink": 0.24611206585619416,
+    "other": 9.8845112058784
+  },
+  "tissue_breakdown_percent_band": {
+    "granulation_red": 25.663019883505385,
+    "slough_yellow": 0.025694888218893753,
+    "eschar_black": 0.20105415781666863,
+    "epithelial_pink": 0.5405937521377646,
+    "other": 73.56963731832128
+  },
+  "tissue_breakdown_percent_all": {
+    "granulation_red": 12.590030229038376,
+    "slough_yellow": 0.012605664527250746,
+    "eschar_black": 0.09863523217751395,
+    "epithelial_pink": 0.26521008485904163,
+    "other": 87.03351878939782
+  },
+  "tissue_palette_rgb": {
+    "granulation_red": [
+      210,
+      30,
+      30
+    ],
+    "slough_yellow": [
+      235,
+      210,
+      40
+    ],
+    "eschar_black": [
+      25,
+      25,
+      25
+    ],
+    "epithelial_pink": [
+      255,
+      180,
+      200
+    ],
+    "other": [
+      180,
+      180,
+      180
+    ]
+  },
+  "wound_mask": {
+    "vertex_count": 705108,
+    "fraction": 0.5771659028234233
+  },
+  "classify_region": {
+    "vertex_count": 599341,
+    "band_mm": 2.0,
+    "inside_only": true
+  },
+  "exports": {
+    "depth_colored_ply": "wound_ransac_clean_depth_heatmap_colored.ply",
+    "depth_legend_png": "wound_ransac_clean_depth_legend.png",
+    "tissue_colored_ply": "wound_ransac_clean_tissue_class_colored.ply",
+    "tissue_legend_png": "wound_ransac_clean_tissue_legend.png",
+    "mask_preview_ply": "wound_ransac_clean_mask_preview.ply",
+    "score2d_png": "wound_ransac_clean_score2d.png",
+    "tissue_overlay_png": "wound_ransac_clean_tissue_overlay.png",
+    "tissue_overlay_mtl": "wound_ransac_clean_overlay.mtl"
+  },
+  "notes": {
+    "tissue_breakdown_source": "recomputed_from_masked_vertices_lab",
+    "mask_fraction_vertices": 0.57717
+  }
+}
