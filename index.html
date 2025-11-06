@@ -1,0 +1,536 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Wound Analysis — Single Visit</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<style>
+  :root{
+    --sideW: clamp(420px, 34vw, 560px);
+    --bg:#0e1620; --panel:#0f1a25; --card:#11202e; --muted:#96aabc; --txt:#e8f1f8;
+    --chip:#14273a; --chip-on:#1e3850; --border:#152838; --accent:#8ab4ff;
+    --barTrack:#213244; --shadow:0 8px 28px rgba(0,0,0,.28), inset 0 1px 0 rgba(255,255,255,.03);
+  }
+  html,body{height:100%;margin:0;background:var(--bg);color:var(--txt);
+    font:14px/1.5 ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial;}
+  #root{height:100%;display:grid;grid-template-columns:minmax(0,1fr) var(--sideW);}  
+  #viewer{position:relative;background:var(--bg); min-height:72vh}
+  canvas{display:block;width:100%;height:100%}
+
+  /* HUD overlay */
+  #hud{position:absolute;top:12px;left:12px;z-index:5;
+       background:rgba(10,16,24,.78);border:1px solid var(--border);
+       border-radius:10px;padding:8px 10px;color:#e9f2f9;font-size:12px;
+       box-shadow:0 6px 20px rgba(0,0,0,.35);backdrop-filter:blur(2px);
+       pointer-events:none}
+  #hud h4{margin:0 0 6px;font-size:12px;color:#cfe2f2;letter-spacing:.2px}
+  #hud .row{display:flex;align-items:center;gap:6px;margin:2px 0}
+  #hud .sw{width:10px;height:10px;border-radius:2px}
+  #hud .pct{margin-left:6px;color:#cbd9e6}
+
+  aside{background:var(--panel);border-left:1px solid var(--border);overflow:auto}
+  .pad{padding:18px 18px 24px}
+  h2{margin:0 0 12px;font-size:20px;letter-spacing:.2px}
+
+  .chips{display:flex;gap:10px;margin:8px 0 16px;position:sticky;top:0;z-index:1}
+  .chip{padding:10px 14px;border-radius:12px;background:var(--chip);
+        border:1px solid var(--border);cursor:pointer;color:#dbe7f1}
+  .chip.active{background:var(--chip-on);box-shadow:var(--shadow)}
+
+  .card{background:var(--card);border:1px solid var(--border);border-radius:14px;
+        padding:12px 14px;box-shadow:var(--shadow); margin-bottom:10px}
+  .kv{display:grid;grid-template-columns:auto 1fr;gap:8px 10px}
+  .kv .k{color:var(--muted)}
+
+  .bars{display:grid;gap:10px;margin-top:10px}
+  .barRow{display:grid;grid-template-columns:170px 1fr;gap:12px;align-items:center}
+  .barLbl{display:flex;flex-direction:column}
+  .barLbl small{color:var(--muted)}
+  .bar{height:12px;background:var(--barTrack);border-radius:8px;overflow:hidden;position:relative}
+  .bar>span{position:absolute;inset:0 auto 0 0;width:0;border-radius:8px}
+
+  .legendBox{display:flex;align-items:center;justify-content:center;height:160px;background:#0c141d;border-radius:12px}
+  .legendBox img{max-width:100%;max-height:100%}
+
+  .muted{color:var(--muted)}
+  .export a{color:var(--accent);text-decoration:none}
+
+  .sectHdr{display:flex;align-items:center;justify-content:space-between;margin:4px 0 8px}
+  .badge{display:inline-block;padding:2px 8px;border-radius:999px;border:1px solid rgba(255,255,255,.12);
+    font-size:11px;color:#cfe2f2;opacity:.9}
+
+  .modal{position:fixed;inset:0;background:rgba(0,0,0,.75);display:none;align-items:center;justify-content:center}
+  .modal.show{display:flex}
+  .modal > div{background:#0e1620;border:1px solid var(--border);border-radius:12px;max-width:900px;width:90vw;max-height:90vh;overflow:auto;padding:16px}
+</style>
+</head>
+<body>
+<div id="root">
+  <div>
+    <div class="chips" style="padding:12px">
+      <button id="btnTissue" class="chip active">Tissue classes</button>
+      <button id="btnDepth" class="chip">Depth heatmap</button>
+      <button id="btnReset" class="chip">Reset view</button>
+    </div>
+    <div id="viewer">
+      <div id="hud"><h4>Tissue % (masked)</h4><div id="hudRows"></div></div>
+    </div>
+  </div>
+
+  <aside>
+    <div class="pad">
+      <h2>Wound Analysis</h2>
+
+      <!-- EPIC-style: Measurements block -->
+      <div class="card">
+        <div class="sectHdr"><div class="muted">Measurements</div><span class="badge" id="visitTag"></span></div>
+        <div class="kv">
+          <div class="k">Surface area</div><div id="kvArea">—</div>
+          <div class="k">Avg depth</div>   <div id="kvAvg">—</div>
+          <div class="k">Max depth</div>   <div id="kvMax">—</div>
+          <div class="k">Volume</div>      <div id="kvVol">—</div>
+          <div class="k">Edges</div>       <div id="kvEdges">—</div>
+          <div class="k">Undermining</div> <div id="kvUnder">—</div>
+        </div>
+      </div>
+
+      <!-- Tissue % bars + exports -->
+      <div class="card">
+        <div class="bars" id="bars"></div>
+        <div class="export muted" style="margin-top:8px">Exports:
+          <a id="lnkDepth" target="_blank">Depth .ply</a> ·
+          <a id="lnkTissue" target="_blank">Tissue .ply</a> ·
+          <a id="lnkMetrics" target="_blank">metrics.json</a>
+        </div>
+      </div>
+
+      <!-- Flowsheet (EHR-friendly) -->
+      <div class="card">
+        <div class="sectHdr"><div class="muted">Flowsheet (chartable)</div><span class="badge">EHR fields</span></div>
+        <table style="width:100%; border-collapse:collapse; font-size:13px">
+          <tbody id="flowsheetRows"></tbody>
+        </table>
+      </div>
+
+      <!-- Category Matrix -->
+      <div class="card" id="cmatrix">
+        <div class="muted">Category Matrix — clinical decision support (not diagnosis)</div>
+        <div id="cmatrixBody" class="muted" style="margin-top:6px">Awaiting metrics…</div>
+      </div>
+
+      <!-- Actions -->
+      <div class="card">
+        <div style="display:flex; gap:8px; flex-wrap:wrap">
+          <button id="btnDraft" class="chip" style="background:var(--chip-on)">Draft note (Claude)</button>
+          <button id="btnCopy" class="chip">Copy SmartText</button>
+          <button id="btnSaveZip" class="chip">Save case (.woundcase.zip)</button>
+          <span id="saveMsg" class="muted"></span>
+        </div>
+      </div>
+
+      <div id="msg" class="muted"></div>
+    </div>
+  </aside>
+</div>
+
+<div id="modal" class="modal"><div>
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+    <strong id="modalTitle">Note</strong>
+    <button id="btnCloseModal" class="chip">Close</button>
+  </div>
+  <div id="modalBody" style="white-space:normal"></div>
+</div></div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.158.0/build/three.module.js",
+    "three/examples/jsm/controls/OrbitControls": "https://unpkg.com/three@0.158.0/examples/jsm/controls/OrbitControls.js",
+    "three/examples/jsm/loaders/OBJLoader": "https://unpkg.com/three@0.158.0/examples/jsm/loaders/OBJLoader.js",
+    "three/examples/jsm/loaders/MTLLoader": "https://unpkg.com/three@0.158.0/examples/jsm/loaders/MTLLoader.js",
+    "three/examples/jsm/loaders/PLYLoader": "https://unpkg.com/three@0.158.0/examples/jsm/loaders/PLYLoader.js"
+  }
+}
+</script>
+<script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/file-saver@2.0.5/dist/FileSaver.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script type="module">
+import { classifyWound } from './clinical/classifier.js';
+import * as THREE from 'three';
+import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls';
+import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader';
+import { MTLLoader } from 'three/examples/jsm/loaders/MTLLoader';
+import { PLYLoader } from 'three/examples/jsm/loaders/PLYLoader';
+
+const CLAUDE_API = localStorage.getItem('claudeApi') || 'http://127.0.0.1:5055';
+
+/*************************
+ * Query / asset discovery
+ *************************/
+const qs = new URLSearchParams(location.search);
+let prefix   = qs.get('prefix') || null;
+// Keep OBJ defaults available, but we will prefer PLY for speed
+let modelUrl = qs.get('model')  || 'scene_textured.obj';
+let mtlUrl   = qs.get('mtl')    || 'scene_textured.obj.mtl';
+
+const dom = {
+  viewer: document.getElementById('viewer'),
+  btnTissue: document.getElementById('btnTissue'),
+  btnDepth: document.getElementById('btnDepth'),
+  btnReset: document.getElementById('btnReset'),
+  kvArea: document.getElementById('kvArea'),
+  kvAvg: document.getElementById('kvAvg'),
+  kvMax: document.getElementById('kvMax'),
+  kvVol: document.getElementById('kvVol'),
+  kvEdges: document.getElementById('kvEdges'),
+  kvUnder: document.getElementById('kvUnder'),
+  visitTag: document.getElementById('visitTag'),
+  bars: document.getElementById('bars'),
+  lnkDepth: document.getElementById('lnkDepth'),
+  lnkMetrics: document.getElementById('lnkMetrics'),
+  lnkTissue: document.getElementById('lnkTissue'),
+  hud: document.getElementById('hud'),
+  hudRows: document.getElementById('hudRows'),
+  cmatrixBody: document.getElementById('cmatrixBody'),
+  btnDraft: document.getElementById('btnDraft'),
+  btnCopy: document.getElementById('btnCopy'),
+  btnSaveZip: document.getElementById('btnSaveZip'),
+  saveMsg: document.getElementById('saveMsg'),
+  msg: document.getElementById('msg'),
+  flowsheetRows: document.getElementById('flowsheetRows'),
+  modal: document.getElementById('modal'),
+  modalTitle: document.getElementById('modalTitle'),
+  modalBody: document.getElementById('modalBody'),
+  btnCloseModal: document.getElementById('btnCloseModal'),
+};
+
+/* three.js viewer */
+const renderer = new THREE.WebGLRenderer({ antialias:true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(dom.viewer.clientWidth, dom.viewer.clientHeight);
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.15;
+dom.viewer.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color('#0f1720');
+const camera = new THREE.PerspectiveCamera(50, dom.viewer.clientWidth/dom.viewer.clientHeight, 0.01, 5000);
+camera.position.set(0.45,0.38,0.45);
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+scene.add(new THREE.HemisphereLight(0xffffff, 0x243447, 0.9));
+const dir = new THREE.DirectionalLight(0xffffff, 1.6);
+dir.position.set(0.8,1.2,0.6); scene.add(dir);
+scene.add(new THREE.AmbientLight(0xffffff, .45));
+const loaderOBJ = new OBJLoader();
+const loaderMTL = new MTLLoader();
+const loaderPLY = new PLYLoader();
+let current=null;
+
+function clearScene(){
+  if(!current) return;
+  current.traverse?.(o=>{
+    if(o.isMesh){
+      o.geometry?.dispose?.();
+      const mats = Array.isArray(o.material)?o.material:[o.material];
+      mats.forEach(m=>{ if(!m) return; if(m.map) m.map.dispose(); m.dispose?.(); });
+    }
+  });
+  scene.remove(current); current=null;
+}
+function fit(obj){
+  const b = new THREE.Box3().setFromObject(obj);
+  const s = b.getSize(new THREE.Vector3()); const c = b.getCenter(new THREE.Vector3());
+  const dist = Math.max(s.x,s.y,s.z);
+  camera.position.copy(c.clone().add(new THREE.Vector3(dist,dist,dist).multiplyScalar(.6)));
+  controls.target.copy(c);
+  camera.near=Math.max(.001,dist/100); camera.far=dist*50; camera.updateProjectionMatrix(); controls.update();
+}
+
+function animate(){ requestAnimationFrame(animate); controls.update(); renderer.render(scene,camera); }
+animate();
+addEventListener('resize', ()=>{ const w = dom.viewer.clientWidth, h = dom.viewer.clientHeight; renderer.setSize(w,h); camera.aspect=w/h; camera.updateProjectionMatrix(); });
+
+/* Loaders */
+async function loadOBJ(){
+  return new Promise((resolve,reject)=>{
+    loaderMTL.load(mtlUrl,(materials)=>{
+      materials.preload();
+      const objL = new OBJLoader(); objL.setMaterials(materials);
+      objL.load(modelUrl,(obj)=>{
+        obj.traverse(c=>{
+          if(c.isMesh){
+            const m = new THREE.MeshStandardMaterial({ map: c.material.map || null, color:0xffffff, roughness:1.0, metalness:0.0, side:THREE.DoubleSide });
+            if(m.map){ m.map.colorSpace=THREE.SRGBColorSpace; m.map.anisotropy=8; m.map.generateMipmaps = true; }
+            c.material = m;
+          }
+        });
+        resolve(obj);
+      },undefined,reject);
+    },undefined,reject);
+  });
+}
+async function loadPLY(path){
+  return new Promise((resolve,reject)=>{
+    loaderPLY.load(path,(geo)=>{ geo.computeVertexNormals(); const mat=new THREE.MeshStandardMaterial({ vertexColors:true, roughness:1.0, metalness:0.0, side:THREE.DoubleSide }); resolve(new THREE.Mesh(geo,mat)); }, undefined, reject);
+  });
+}
+
+/* Metrics + HUD */
+const order = [
+  ['granulation_red','#e25e5e','granulation red'],
+  ['slough_yellow','#ffd44d','slough yellow'],
+  ['eschar_black','#33393f','eschar black'],
+  ['epithelial_pink','#f2a6b6','epithelial pink'],
+  ['other','#9fb3c5','other']
+];
+function renderBarsAndHud(tb){
+  dom.bars.innerHTML=''; dom.hudRows.innerHTML='';
+  for(const [key,color,label] of order){
+    const pct = +(tb[key] ?? 0);
+    const row = document.createElement('div'); row.className='barRow';
+    row.innerHTML = `<div class="barLbl">${label}<small>(${pct.toFixed(1)}%)</small></div><div class="bar"><span style="width:${pct}%; background:${color}"></span></div>`;
+    dom.bars.appendChild(row);
+
+    const r = document.createElement('div'); r.className='row';
+    r.innerHTML = `<span class="sw" style="background:${color}"></span><span>${label}</span><span class="pct">${pct.toFixed(1)}%</span>`;
+    dom.hudRows.appendChild(r);
+  }
+}
+
+function buildAnalyticsFromMetrics(m){
+  let area_cm2 = 0
+  if (m?.surface_area?.mm2 != null) area_cm2 = m.surface_area.mm2 / 100
+  else if (m?.surface_area?.in2 != null) area_cm2 = m.surface_area.in2 * 6.4516
+  let volume_cm3 = 0
+  if (m?.volume?.mm3 != null) volume_cm3 = m.volume.mm3 / 1000
+  else if (m?.volume?.in3 != null) volume_cm3 = m.volume.in3 * 16.387064
+  const tb = m?.tissue_breakdown_percent_wound || m?.tissue_breakdown_percent || {}
+  return {
+    area_cm2,
+    avg_depth_mm: +(m?.depth?.avg_mm ?? 0),
+    max_depth_mm: +(m?.depth?.max_mm ?? 0),
+    volume_cm3,
+    undermining_mm: +(m?.edges?.undermining_extent_p95_mm ?? 0),
+    edge_irregularity: +(m?.edges?.edge_attach_gap_p90_mm ?? 0),
+    tissue_pct: {
+      granulation: +(tb.granulation_red ?? 0) / 100,
+      slough:      +(tb.slough_yellow ?? 0) / 100,
+      eschar:      +(tb.eschar_black ?? 0) / 100,
+      epithelial:  +(tb.epithelial_pink ?? 0) / 100,
+    }
+  }
+}
+function renderFlowsheet(a){
+  const rows = [
+    ['Surface area (cm²)',  a.area_cm2 ? a.area_cm2.toFixed(1) : '—'],
+    ['Avg depth (mm)',      a.avg_depth_mm ? a.avg_depth_mm.toFixed(1) : '—'],
+    ['Max depth (mm)',      a.max_depth_mm ? a.max_depth_mm.toFixed(1) : '—'],
+    ['Volume (cm³)',        a.volume_cm3 ? a.volume_cm3.toFixed(2) : '—'],
+    ['Granulation (%)',     (a.tissue_pct.granulation*100).toFixed(0)],
+    ['Slough (%)',          (a.tissue_pct.slough*100).toFixed(0)],
+    ['Eschar (%)',          (a.tissue_pct.eschar*100).toFixed(0)],
+    ['Epithelial (%)',      (a.tissue_pct.epithelial*100).toFixed(0)],
+  ];
+  dom.flowsheetRows.innerHTML = rows.map(([k,v]) =>
+    `<tr><td class="k" style="padding:6px 0;color:var(--muted)">${k}</td><td>${v}</td></tr>`
+  ).join('');
+}
+
+/* Classification */
+import { classifyWound } from './clinical/classifier.js';
+let lastMetrics=null, lastClassification=null, lastNoteMD='';
+
+function renderCategoryMatrix(result){
+  const el = dom.cmatrixBody;
+  if(!result){ el.textContent = 'No classification result.'; return; }
+  const rows = result.predictions.map(p=>{
+    const probCell = (p.system==='UT' || p.system==='WIfI') ? '<span class="badge">rule-based</span>' : `${(p.probability*100).toFixed(0)}%`;
+    return `<div style="display:grid; grid-template-columns:72px 1fr 80px; gap:8px; padding:6px 0; border-top:1px solid rgba(255,255,255,.06)">
+      <span style="font-weight:600">${p.system}</span>
+      <span>${p.label}</span>
+      <span style="justify-self:end">${probCell}</span>
+      <div class="muted" style="grid-column:1/-1; font-size:12px">${p.rationale.join(' · ')}</div>
+    </div>`;
+  }).join('');
+  el.innerHTML = rows || '<span class="muted">No staging system available.</span>';
+}
+
+/* Single-view tab switches */
+async function showTissue(){
+  // Prefer fast PLY (vertex-colored); fallback to OBJ if PLY missing
+  try{
+    clearScene();
+    const mesh = await loadPLY(`${prefix}_tissue_class_colored.ply`);
+    current=mesh; scene.add(mesh); fit(mesh);
+  }catch(err){
+    try{
+      const obj = await loadOBJ(); clearScene(); current=obj; scene.add(obj); fit(obj);
+    }catch(e){ dom.msg.textContent = `Model load error: ${e}`; }
+  }
+}
+async function showDepth(){
+  try{ clearScene(); const mesh = await loadPLY(`${prefix}_depth_heatmap_colored.ply`); current=mesh; scene.add(mesh); fit(mesh);}catch(e){ dom.msg.textContent = `Depth PLY load error: ${e}`; }
+}
+function resetView(){ if(current) fit(current); }
+
+/* Save woundcase */
+async function fetchAsUint8(url){ const r = await fetch(url, {cache:'no-cache'}); if(!r.ok) throw new Error(`${r.status} ${r.statusText} @ ${url}`); return new Uint8Array(await r.arrayBuffer()); }
+async function canvasToBlob(canvas, type='image/png', quality=0.95){ return new Promise(res=> canvas.toBlob(b=>res(b), type, quality)); }
+async function saveWoundCaseZip(){
+  dom.saveMsg.textContent = 'Bundling…'; dom.btnSaveZip.disabled=true;
+  try{
+    const zip = new JSZip();
+    const model = zip.folder('model');
+    try{ model.file(modelUrl.split('/').pop(), await fetchAsUint8(modelUrl)); }catch{}
+    try{ model.file(mtlUrl.split('/').pop(), await fetchAsUint8(mtlUrl)); }catch{}
+    try{ model.file(`${prefix}_depth_heatmap_colored.ply`, await fetchAsUint8(`${prefix}_depth_heatmap_colored.ply`)); }catch{}
+    try{ model.file(`${prefix}_tissue_class_colored.ply`, await fetchAsUint8(`${prefix}_tissue_class_colored.ply`)); }catch{}
+
+    zip.file('metrics.json', JSON.stringify(lastMetrics, null, 2));
+    const analytics = buildAnalyticsFromMetrics(lastMetrics);
+    const classification = lastClassification || classifyWound(analytics, {});
+    zip.file('analytics.json', JSON.stringify(analytics, null, 2));
+    zip.file('classification.json', JSON.stringify({ model:{name:'rules-baseline',version:'0.1.0'}, result:classification }, null, 2));
+    zip.file('ui_state.json', JSON.stringify({ camera:{ position: camera.position.toArray(), target: controls.target.toArray(), fov: camera.fov, exposure: renderer.toneMappingExposure } }, null, 2));
+
+    const images = zip.folder('images');
+    const screenshot = await canvasToBlob(renderer.domElement, 'image/png', 0.95);
+    images.file('viewer_screenshot.png', screenshot);
+
+    const blob = await zip.generateAsync({ type:'blob', compression:'DEFLATE' });
+    const fname = `${prefix}.woundcase.zip`.replace(/[^\w.-]/g,'_');
+    window.saveAs(blob, fname);
+    dom.saveMsg.textContent = 'Downloaded.';
+  }catch(err){ console.error(err); dom.saveMsg.textContent = 'Save failed — see console.'; }
+  finally{ dom.btnSaveZip.disabled=false; setTimeout(()=>dom.saveMsg.textContent='',1600); }
+}
+
+/* Claude draft */
+async function draftNote(){
+  if(!lastMetrics){ dom.modalTitle.textContent='Draft note'; dom.modalBody.textContent='Metrics not loaded.'; dom.modal.classList.add('show'); return; }
+  const analytics = buildAnalyticsFromMetrics(lastMetrics);
+  const result = lastClassification || classifyWound(analytics, {});
+  try{
+    const r = await fetch(`${CLAUDE_API}/api/draft-note`, { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ analytics, classification: result, ask: 'Assessment/Plan' })});
+    if(!r.ok){ throw new Error(await r.text()); }
+    const data = await r.json();
+    lastNoteMD = (typeof data === 'string') ? data : (data.note_md || '');
+    dom.modalTitle.textContent='Draft note';
+    dom.modalBody.innerHTML = (typeof data === 'string') ? `<pre>${data}</pre>` : (data.note_html || `<pre>${data.note_md || ''}</pre>`);
+
+    // Optional: Charts in modal (uses datasets returned by API)
+    const charts = data.charts || {};
+    if (charts.tissue_breakdown?.length || charts.depth_histogram?.length) {
+      const wrap = document.createElement('div'); wrap.style.marginTop = '12px';
+      wrap.innerHTML = `
+        <h3 style="margin:10px 0 6px">Charts</h3>
+        <canvas id="chartTissue" height="160"></canvas>
+        <canvas id="chartDepth"  height="160" style="margin-top:14px"></canvas>`;
+      dom.modalBody.appendChild(wrap);
+
+      if (charts.tissue_breakdown?.length) {
+        const t = charts.tissue_breakdown;
+        new Chart(document.getElementById('chartTissue'), {
+          type:'doughnut',
+          data:{ labels:t.map(d=>d.label), datasets:[{ data:t.map(d=>d.value) }] },
+          options:{ plugins:{ legend:{ position:'right' } } }
+        });
+      }
+      if (charts.depth_histogram?.length) {
+        const h = charts.depth_histogram;
+        new Chart(document.getElementById('chartDepth'), {
+          type:'bar',
+          data:{ labels:h.map(d=>`${d.bin_mm}`), datasets:[{ data:h.map(d=>d.count) }] },
+          options:{ scales:{ x:{ title:{ display:true, text:'Depth (mm)' } }, y:{ title:{ display:true, text:'Count' } } } }
+        });
+      }
+    }
+  }catch(err){ dom.modalTitle.textContent='Draft note — error'; dom.modalBody.textContent = String(err); }
+  dom.modal.classList.add('show');
+}
+
+/* Copy SmartText */
+async function copySmartText(){
+  try{
+    if (!lastNoteMD) { await draftNote(); } // ensure we have a draft
+    await navigator.clipboard.writeText(lastNoteMD || '');
+    dom.saveMsg.textContent = 'SmartText copied';
+    setTimeout(()=>dom.saveMsg.textContent='',1500);
+  }catch(e){
+    dom.saveMsg.textContent = 'Copy failed — open note and copy manually.';
+    setTimeout(()=>dom.saveMsg.textContent='',2000);
+  }
+}
+
+/* Auto-discover prefix if not provided */
+async function autoloadMetrics(){
+  const tryPrefixes = [];
+  if (prefix) tryPrefixes.push(prefix);
+  tryPrefixes.push('wound_ransac_clean','wound_A');
+
+  for (const p of tryPrefixes){
+    try{
+      const url = `${p}_metrics.json`;
+      const r = await fetch(url,{cache:'no-cache'});
+      if(r.ok){ prefix = p; const m = await r.json(); return [m,url]; }
+    }catch(e){}
+  }
+  throw new Error('Could not locate metrics JSON. Provide ?prefix=... in URL or place *_metrics.json beside the HTML.');
+}
+
+/* Load + render metrics */
+async function loadMetrics(){
+  try{
+    const [m, url] = await autoloadMetrics();
+    lastMetrics = m; dom.visitTag.textContent = url.split('/').pop();
+
+    // Fill KVs
+    dom.kvArea.textContent = m.surface_area?.in2!=null ? `${m.surface_area.in2.toFixed(2)} in²`
+                         : m.surface_area?.mm2!=null ? `${m.surface_area.mm2.toFixed(0)} mm²` : '—';
+    dom.kvAvg.textContent  = m.depth?.avg_mm!=null ? `${m.depth.avg_mm.toFixed(1)} mm` : '—';
+    dom.kvMax.textContent  = m.depth?.max_mm!=null ? `${m.depth.max_mm.toFixed(1)} mm` : '—';
+    const vIn3 = (m.volume?.in3 != null) ? m.volume.in3 : (m.volume?.mm3 != null ? m.volume.mm3/(25.4**3) : null);
+    dom.kvVol.textContent  = vIn3!=null ? `${vIn3.toFixed(3)} in³` : '—';
+    const edges=[];
+    if(m.edges?.edge_attach_gap_p90_mm!=null) edges.push(`attach gap p90 ${m.edges.edge_attach_gap_p90_mm.toFixed(1)} mm`);
+    if(m.edges?.epibole_angle_p90_deg!=null)  edges.push(`epibole p90 ${m.edges.epibole_angle_p90_deg.toFixed(0)}°`);
+    dom.kvEdges.textContent = edges.join(' · ')||'—';
+    const und=[];
+    if(m.edges?.undermining_extent_p95_mm!=null) und.push(`p95 ${m.edges.undermining_extent_p95_mm.toFixed(1)} mm`);
+    und.push(`tunnel ${m.edges?.tunneling_flag?'yes':'no'}`);
+    dom.kvUnder.textContent = und.join(' · ');
+
+    const tb = m.tissue_breakdown_percent_wound || m.tissue_breakdown_percent || {};
+    renderBarsAndHud(tb);
+
+    dom.lnkDepth.href   = `${prefix}_depth_heatmap_colored.ply`;
+    dom.lnkTissue.href  = `${prefix}_tissue_class_colored.ply`;
+    dom.lnkMetrics.href = `${prefix}_metrics.json`;
+
+    // Render flowsheet table
+    renderFlowsheet(buildAnalyticsFromMetrics(m));
+
+    // Baseline classify
+    const analytics = buildAnalyticsFromMetrics(m);
+    lastClassification = classifyWound(analytics, {});
+    renderCategoryMatrix(lastClassification);
+  }catch(e){ dom.msg.textContent = `Metrics load error: ${e.message || e}`; }
+}
+
+/* UI hooks */
+dom.btnTissue.onclick = showTissue; dom.btnDepth.onclick = showDepth; dom.btnReset.onclick = resetView;
+dom.btnSaveZip.addEventListener('click', saveWoundCaseZip);
+dom.btnDraft.addEventListener('click', draftNote);
+dom.btnCopy.addEventListener('click', copySmartText);
+dom.btnCloseModal.addEventListener('click', ()=> dom.modal.classList.remove('show'));
+
+/* Init */
+await loadMetrics();
+await showTissue();
+
+</script>
+</body>
+</html>
